@@ -1,0 +1,92 @@
+name: Benchmark prebuilt unpack
+
+on:
+  workflow_dispatch:
+    inputs:
+      dotnet_version:
+        description: '.NET SDK version to benchmark (must have a published release)'
+        required: true
+        type: string
+      baseline_linux_x64:
+        description: 'Optional: known `dotnet workload install` time (s) on linux-x64'
+        required: false
+        default: ''
+        type: string
+      baseline_osx_arm64:
+        description: 'Optional: known `dotnet workload install` time (s) on osx-arm64'
+        required: false
+        default: ''
+        type: string
+      baseline_win_x64:
+        description: 'Optional: known `dotnet workload install` time (s) on win-x64'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            baseline: ${{ inputs.baseline_win_x64 }}
+          - os: macos-latest
+            rid: osx-arm64
+            baseline: ${{ inputs.baseline_osx_arm64 }}
+          - os: ubuntu-latest
+            rid: linux-x64
+            baseline: ${{ inputs.baseline_linux_x64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Streaming unpack benchmark
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RID: ${{ matrix.rid }}
+          VERSION: ${{ inputs.dotnet_version }}
+          BASELINE: ${{ matrix.baseline }}
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/dotnet"
+
+          # Stream-unpack straight from the release (curl -> tar, no temp files).
+          ./benchmark/stream-unpack.sh "$RID" "$VERSION" "$dest" | tee result.txt
+
+          secs="$(grep '^elapsed_seconds=' result.txt | cut -d= -f2)"
+          bytes="$(grep '^bytes=' result.txt | cut -d= -f2)"
+          mbps="$(grep '^throughput_mib_s=' result.txt | cut -d= -f2)"
+
+          # Sanity-check the unpacked SDK actually runs.
+          export DOTNET_ROOT="$dest"
+          export PATH="$dest:$PATH"
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+          ver="$(dotnet --version)"
+          workloads="$(dotnet workload list --machine-readable 2>/dev/null || dotnet workload list)"
+
+          {
+            echo "### ${RID} — .NET ${VERSION}"
+            echo ""
+            echo "| metric | value |"
+            echo "|---|---|"
+            echo "| streaming unpack | **${secs}s** |"
+            echo "| download size | $(awk -v b="$bytes" 'BEGIN{printf "%.2f GiB", b/1073741824}') |"
+            echo "| throughput | ${mbps} MiB/s |"
+            echo "| dotnet --version | \`${ver}\` |"
+            if [ -n "${BASELINE}" ]; then
+              saved="$(awk -v base="$BASELINE" -v u="$secs" 'BEGIN{printf "%d", base-u}')"
+              speedup="$(awk -v base="$BASELINE" -v u="$secs" 'BEGIN{if(u<=0)u=1; printf "%.1f", base/u}')"
+              echo "| workload-install baseline | ${BASELINE}s |"
+              echo "| **time saved** | **${saved}s (${speedup}x faster)** |"
+            fi
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "$ver verified for $RID"
