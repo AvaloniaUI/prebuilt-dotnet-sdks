@@ -1,0 +1,151 @@
+name: Build prebuilt .NET SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      dotnet_version:
+        description: '.NET SDK version to install (e.g. 10.0.101)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark the GitHub release as a prerelease'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Full solution builds (incl. mobile + browser) happen on Windows and macOS,
+          # so those get every workload. Linux only needs android + wasm.
+          - os: windows-latest
+            rid: win-x64
+            workloads: 'ios android macos wasm-tools wasm-experimental maui-android'
+          - os: macos-latest
+            rid: osx-arm64
+            workloads: 'ios android macos wasm-tools wasm-experimental maui-android'
+          - os: ubuntu-latest
+            rid: linux-x64
+            workloads: 'android wasm-tools wasm-experimental'
+    steps:
+      - name: Install .NET SDK and workloads (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          DOTNET_VERSION: ${{ inputs.dotnet_version }}
+          WORKLOADS: ${{ matrix.workloads }}
+        run: |
+          set -euo pipefail
+          INSTALL_DIR="$RUNNER_TEMP/dotnet"
+          mkdir -p "$INSTALL_DIR"
+
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh --version "$DOTNET_VERSION" --install-dir "$INSTALL_DIR" --no-path
+
+          export DOTNET_ROOT="$INSTALL_DIR"
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1
+          export DOTNET_NOLOGO=1
+          export PATH="$INSTALL_DIR:$PATH"
+
+          dotnet --info
+          # shellcheck disable=SC2086
+          dotnet workload install $WORKLOADS --skip-sign-check
+          dotnet workload list
+
+      - name: Install .NET SDK and workloads (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          DOTNET_VERSION: ${{ inputs.dotnet_version }}
+          WORKLOADS: ${{ matrix.workloads }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installDir = Join-Path $env:RUNNER_TEMP 'dotnet'
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+
+          Invoke-WebRequest -Uri 'https://dot.net/v1/dotnet-install.ps1' -OutFile dotnet-install.ps1
+          ./dotnet-install.ps1 -Version $env:DOTNET_VERSION -InstallDir $installDir -NoPath
+
+          $env:DOTNET_ROOT = $installDir
+          $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+          $env:DOTNET_NOLOGO = '1'
+          $env:PATH = "$installDir;$env:PATH"
+
+          & "$installDir/dotnet.exe" --info
+          $wl = $env:WORKLOADS -split '\s+' | Where-Object { $_ }
+          & "$installDir/dotnet.exe" workload install @wl --skip-sign-check
+          & "$installDir/dotnet.exe" workload list
+
+      - name: Create tarball (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTALL_DIR="$RUNNER_TEMP/dotnet"
+          OUT="dotnet-${{ matrix.rid }}-${{ inputs.dotnet_version }}.tar.gz"
+          tar -czf "$OUT" -C "$INSTALL_DIR" .
+          ls -lh "$OUT"
+
+      - name: Create tarball (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installDir = Join-Path $env:RUNNER_TEMP 'dotnet'
+          $out = "dotnet-${{ matrix.rid }}-${{ inputs.dotnet_version }}.tar.gz"
+          tar -czf $out -C $installDir .
+          Get-Item $out | Format-List Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-${{ matrix.rid }}-${{ inputs.dotnet_version }}
+          path: dotnet-${{ matrix.rid }}-${{ inputs.dotnet_version }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  create-release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR release
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.dotnet_version }}
+          name: .NET SDK ${{ inputs.dotnet_version }}
+          body: |
+            Prebuilt .NET SDK **${{ inputs.dotnet_version }}** with workloads preinstalled.
+
+            - `win-x64`, `osx-arm64`: ios, android, macos, wasm-tools, wasm-experimental, maui-android
+            - `linux-x64`: android, wasm-tools, wasm-experimental
+
+            Each archive contains a full `dotnet` install directory. Extract it and use directly:
+
+            ```bash
+            mkdir -p ~/dotnet
+            tar -xzf dotnet-<rid>-${{ inputs.dotnet_version }}.tar.gz -C ~/dotnet
+            export DOTNET_ROOT=~/dotnet
+            export PATH="$DOTNET_ROOT:$PATH"
+            ```
+          prerelease: ${{ inputs.prerelease }}
+          files: release/*.tar.gz
+          fail_on_unmatched_files: true

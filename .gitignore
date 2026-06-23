@@ -1,0 +1,5 @@
+dotnet/
+*.tar.gz
+dotnet-install.sh
+dotnet-install.ps1
+.claude/
