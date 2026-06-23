@@ -1,30 +1,18 @@
 name: Benchmark prebuilt unpack
 
+# Auto-runs on every commit to this branch (avoids the workflow_dispatch
+# "must be on default branch" limitation). Edit the values below to benchmark a
+# different SDK version, or to fill in your captured `dotnet workload install`
+# baselines (seconds) so the summary shows the speedup.
 on:
-  workflow_dispatch:
-    inputs:
-      dotnet_version:
-        description: '.NET SDK version to benchmark (must have a published release)'
-        required: true
-        type: string
-      baseline_linux_x64:
-        description: 'Optional: known `dotnet workload install` time (s) on linux-x64'
-        required: false
-        default: ''
-        type: string
-      baseline_osx_arm64:
-        description: 'Optional: known `dotnet workload install` time (s) on osx-arm64'
-        required: false
-        default: ''
-        type: string
-      baseline_win_x64:
-        description: 'Optional: known `dotnet workload install` time (s) on win-x64'
-        required: false
-        default: ''
-        type: string
+  push:
+    branches: [benchmark-unpack]
 
 permissions:
   contents: read
+
+env:
+  DOTNET_VERSION: '10.0.101'
 
 jobs:
   benchmark:
@@ -36,13 +24,13 @@ jobs:
         include:
           - os: windows-latest
             rid: win-x64
-            baseline: ${{ inputs.baseline_win_x64 }}
+            baseline: ''   # e.g. '420' seconds of `dotnet workload install`
           - os: macos-latest
             rid: osx-arm64
-            baseline: ${{ inputs.baseline_osx_arm64 }}
+            baseline: ''
           - os: ubuntu-latest
             rid: linux-x64
-            baseline: ${{ inputs.baseline_linux_x64 }}
+            baseline: ''
     steps:
       - uses: actions/checkout@v4
 
@@ -51,7 +39,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RID: ${{ matrix.rid }}
-          VERSION: ${{ inputs.dotnet_version }}
+          VERSION: ${{ env.DOTNET_VERSION }}
           BASELINE: ${{ matrix.baseline }}
         run: |
           set -euo pipefail

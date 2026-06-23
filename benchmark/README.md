@@ -9,10 +9,12 @@ Compare the result against your already-captured `dotnet workload install` times
 
 ## Run it
 
-Trigger the **Benchmark prebuilt unpack** workflow (Actions tab → *Run workflow*)
-with the SDK `dotnet_version` (must have a published release). Optionally pass the
-known `dotnet workload install` baseline (seconds) per RID to render the speedup
-in the job summary.
+The **Benchmark prebuilt unpack** workflow auto-runs on every commit to the
+`benchmark-unpack` branch (push-triggered, so it doesn't need to live on the
+default branch). To benchmark a different SDK version, edit `DOTNET_VERSION` at
+the top of `.github/workflows/benchmark.yml`; to render the speedup, fill in the
+per-RID `baseline` values with your captured `dotnet workload install` times.
+Results land in the run's job summary.
 
 ## Run it locally
 
