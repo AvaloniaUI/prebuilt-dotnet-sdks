@@ -43,7 +43,12 @@ jobs:
           BASELINE: ${{ matrix.baseline }}
         run: |
           set -euo pipefail
+          # On the Windows runner $RUNNER_TEMP is a Windows path (D:\a\_temp);
+          # git-bash tar reads the "D:" as a remote host, so normalize to POSIX.
           dest="$RUNNER_TEMP/dotnet"
+          if command -v cygpath >/dev/null 2>&1; then
+            dest="$(cygpath -u "$RUNNER_TEMP")/dotnet"
+          fi
 
           # Stream-unpack straight from the release (curl -> tar, no temp files).
           ./benchmark/stream-unpack.sh "$RID" "$VERSION" "$dest" | tee result.txt
