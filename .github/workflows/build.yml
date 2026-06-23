@@ -124,8 +124,19 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: List artifacts
-        run: ls -lhR release
+      - name: Split tarballs into release-sized parts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GitHub release assets are capped at 2 GiB per file, so split each
+          # archive into <2 GiB numbered parts (file.tar.gz.part00, .part01, ...).
+          mkdir -p assets
+          for f in release/*.tar.gz; do
+            base="$(basename "$f")"
+            split -b 1900m -d -a 2 "$f" "assets/${base}.part"
+          done
+          ( cd assets && sha256sum * > SHA256SUMS )
+          ls -lh assets
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -138,14 +149,19 @@ jobs:
             - `win-x64`, `osx-arm64`: ios, android, macos, wasm-tools, wasm-experimental, maui-android
             - `linux-x64`: android, wasm-tools, wasm-experimental
 
-            Each archive contains a full `dotnet` install directory. Extract it and use directly:
+            Each archive is split into `.partNN` pieces (GitHub caps release assets at
+            2 GiB). Reassemble and extract in one step:
 
             ```bash
+            RID=linux-x64
+            VERSION=${{ inputs.dotnet_version }}
             mkdir -p ~/dotnet
-            tar -xzf dotnet-<rid>-${{ inputs.dotnet_version }}.tar.gz -C ~/dotnet
+            cat dotnet-${RID}-${VERSION}.tar.gz.part* | tar -xz -C ~/dotnet
             export DOTNET_ROOT=~/dotnet
             export PATH="$DOTNET_ROOT:$PATH"
             ```
+
+            `SHA256SUMS` lists checksums for every part.
           prerelease: ${{ inputs.prerelease }}
-          files: release/*.tar.gz
+          files: assets/*
           fail_on_unmatched_files: true

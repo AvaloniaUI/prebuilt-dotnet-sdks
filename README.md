@@ -19,7 +19,9 @@ Full solution builds (including mobile and browser) run on Windows and macOS, so
 those archives carry every workload; Linux only needs android + wasm.
 
 Each archive is named `dotnet-<rid>-<version>.tar.gz` and contains a complete
-`dotnet` install directory.
+`dotnet` install directory. Because GitHub caps release assets at 2 GiB, every
+archive is uploaded as numbered parts (`dotnet-<rid>-<version>.tar.gz.part00`,
+`.part01`, …) plus a `SHA256SUMS` file; reassemble with `cat … .part*`.
 
 The GitHub release is tagged with the .NET version (e.g. `10.0.101`).
 
@@ -41,8 +43,10 @@ assets.
 VERSION=10.0.101
 RID=linux-x64
 mkdir -p "$HOME/dotnet"
-curl -fsSL "https://github.com/AvaloniaUI/prebuilt-dotnet-sdks/releases/download/${VERSION}/dotnet-${RID}-${VERSION}.tar.gz" \
-  | tar -xz -C "$HOME/dotnet"
+# Download all parts for this RID, then reassemble + extract in one pipe.
+gh release download "$VERSION" -R AvaloniaUI/prebuilt-dotnet-sdks \
+  -p "dotnet-${RID}-${VERSION}.tar.gz.part*"
+cat "dotnet-${RID}-${VERSION}.tar.gz.part"* | tar -xz -C "$HOME/dotnet"
 export DOTNET_ROOT="$HOME/dotnet"
 export PATH="$DOTNET_ROOT:$PATH"
 dotnet workload list   # workloads are already present
